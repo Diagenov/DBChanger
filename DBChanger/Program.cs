@@ -24,21 +24,33 @@ namespace DBChanger
             InfoMessage("[DBChanger] Подключение к tshock.sqlite . . .");
             tShockDb = await GetConnection(Path.Combine("tshock", "tshock.sqlite"));
             if (tShockDb == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
                 await Task.Delay(-1);
+            }
 
             InfoMessage("[DBChanger] Подключение к Minigames.sqlite . . .");
             minigamesDb = await GetConnection(Path.Combine("tshock", "Minigames", "Minigames.sqlite"));
             if (minigamesDb == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
                 await Task.Delay(-1);
+            }
 
             InfoMessage("[DBChanger] Получение списка игроков . . .");
             var list = await GetList();
             if (list == null || list.Count == 0)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
                 await Task.Delay(-1);
+            }
 
             InfoMessage("[DBChanger] Проверка списка игроков . . .");
             if (!await CheckList(list))
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
                 await Task.Delay(-1);
+            }
 
             InfoMessage("[DBChanger] Удаление отобранных игроков . . .");
             foreach (var x in list)
