@@ -176,7 +176,6 @@ namespace DBChanger
                                 x.balance = r.GetInt32(1);
                                 if (x.balance > 100 || r.GetString(2) != "{}")
                                 {
-                                    Console.WriteLine(3);
                                     list.Remove(x);
                                     continue;
                                 }
