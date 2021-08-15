@@ -133,7 +133,7 @@ namespace DBChanger
                     {
                         while (await r.ReadAsync())
                         {
-                            var lastLogin = DateTime.Parse(r.GetString(6)).ToLocalTime();
+                            var lastLogin = r.IsDBNull(6) ? new DateTime() : DateTime.Parse(r.GetString(6)).ToLocalTime();
                             if ((DateTime.Now - lastLogin).TotalDays > 90)
                                 list.Add(new AccountInfo
                                 {
@@ -168,7 +168,7 @@ namespace DBChanger
                 {
                     foreach (var x in new List<AccountInfo>(list))
                     {
-                        cmd.CommandText = $"SELECT * FROM `Players` WHERE `Username`='{x.name}';";
+                        cmd.CommandText = $"SELECT * FROM `Players` WHERE `Username`='{x.name.Replace("'", "''")}';"; //  ''/'
                         using (var r = await cmd.ExecuteReaderAsync())
                         {
                             if (await r.ReadAsync())
@@ -209,7 +209,7 @@ namespace DBChanger
         {
             using (var cmd = db.CreateCommand())
             {
-                cmd.CommandText = $"DELETE FROM `{tableName}` WHERE `Username`='{username}';";
+                cmd.CommandText = $"DELETE FROM `{tableName}` WHERE `Username`='{username.Replace("'", "''")}';";
                 try
                 {
                     await cmd.ExecuteNonQueryAsync();
