@@ -16,7 +16,136 @@ namespace DBChanger
 
         static void Main(string[] args)
         {
-            MainAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            //MainAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            ParkourClearAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+        }
+
+        static async Task ParkourClearAsync()
+        {
+            InfoMessage("[DBChanger] Подключение к Minigames.sqlite . . .");
+            minigamesDb = await GetConnection(Path.Combine("tshock", "Minigames", "Minigames.sqlite"));
+            if (minigamesDb == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Получение списка игроков . . .");
+            var list = await GetParkourList();
+            if (list == null || list.Count == 0)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Проверка значков за паркуры у отобранных игроков . . .");
+            foreach (var x in list.ToList())
+            {
+                x.result = await CheckParkourPins(x);
+                if (x.result.Count == 0)
+                    list.Remove(x);
+            }
+
+            string results = " --- --- --- РЕЗУЛЬТАТЫ ПРОВЕРКИ ЗНАЧКОВ ЗА ПАРКУРЫ --- --- ---" + '\n' +
+                             '\n' +
+                             '\n' +
+                             '\n' +
+                             " --- Всего забрали значков ---" + '\n' +
+                             $"За 1 ветку (6): {list.Count(x => x.result.Contains(6))}" + '\n' +
+                             $"За 2 ветку (7): {list.Count(x => x.result.Contains(7))}" + '\n' +
+                             $"За 3 ветку (8): {list.Count(x => x.result.Contains(8))}" + '\n' +
+                             $"За 4 ветку (25): {list.Count(x => x.result.Contains(25))}" + '\n' +
+                             '\n' +
+                             '\n' +
+                             '\n' +
+                             " --- Список игроков, у которых забрали значки ---" + '\n' +
+                             "  *  Name - Removed Pins (IDs)" + '\n' +
+                             string.Join("\n", list.Select(x => $"  *  {x.name} - {string.Join(", ", x.result)}")) + '\n' +
+                             '\n' +
+                             '\n' +
+                             '\n' +
+                             $"Дата: {DateTime.Now.ToString()}, Автор программы: Диагенов Михаил";
+
+
+            File.WriteAllText($"{Environment.CurrentDirectory}\\DBChanger results.txt", results);
+            SuccessMessage("[DBChanger] Готово!");
+            await Task.Delay(-1);
+        }
+
+        static async Task<List<ParkourAccount>> GetParkourList()
+        {
+            var list = new List<ParkourAccount>();
+            using (var cmd = minigamesDb.CreateCommand())
+            {
+                cmd.CommandText = $"SELECT * FROM `Players`;";
+                try
+                {
+                    using (var r = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await r.ReadAsync())
+                        {
+                            if (r.IsDBNull(6) || r.GetString(6) == "[]")
+                                continue;
+
+                            list.Add(new ParkourAccount(
+                                r.GetString(0),
+                                r.GetString(4),
+                                r.GetString(6)));
+                        }
+                        return list;
+                    }
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.ToString()}");
+                }
+                catch (ArgumentException ex)
+                {
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.ToString()}");
+                }
+                catch (InvalidCastException ex)
+                {
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.ToString()}");
+                }
+            }
+            return null;
+        }
+
+        static async Task<List<int>> CheckParkourPins(ParkourAccount user)
+        {
+            var removedPins = new List<int>();
+
+            if (user.parkour[0] <= 25 && user.pins.Remove(6))
+                removedPins.Add(6);
+
+            if (user.parkour[0] <= 20 && user.pins.Remove(7))
+                removedPins.Add(7);
+
+            if (user.parkour[0] <= 15 && user.pins.Remove(8))
+                removedPins.Add(8);
+
+            if (user.parkour[0] <= 17 && user.pins.Remove(25))
+                removedPins.Add(25);
+
+            if (removedPins.Count == 0)
+                return removedPins;
+
+            string pins = $"[{string.Join(",", user.pins)}]";
+
+            using (var cmd = minigamesDb.CreateCommand())
+            {
+                cmd.CommandText = $"UPDATE `Players` SET `Pins`='{pins}' WHERE `Username`='{user.name.Replace("'", "''")}';";
+                try
+                {
+                    await cmd.ExecuteNonQueryAsync();
+                    return removedPins;
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.Message}");
+                    return new List<int>();
+                }
+            }
         }
 
         static async Task MainAsync()
@@ -264,6 +393,30 @@ namespace DBChanger
                         return "Не полностью удален";
                     return "Не удален";
                 }
+            }
+        }
+    
+        class ParkourAccount
+        {
+            public string name;
+            public int[] parkour;
+            public List<int> pins;
+            public List<int> result;
+
+            public ParkourAccount(string name, string parkour, string pins)
+            {
+                this.name = name;
+                result = new List<int>();
+
+                this.parkour = parkour
+                    .Substring(1, parkour.Length - 2)
+                    .Split(',').Select(i => int.Parse(i))
+                    .ToArray();
+
+                this.pins = pins
+                    .Substring(1, pins.Length - 2)
+                    .Split(',').Select(i => int.Parse(i))
+                    .ToList();
             }
         }
     }
