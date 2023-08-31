@@ -156,7 +156,7 @@ namespace DBChanger
             {
                 try
                 {
-                    cmd.CommandText = @"CREATE TABLE IF NOT EXISTS `Twinks` (`Index` INTEGER PRIMARY KEY AUTOINCREMENT, `Count` INTEGER NOT NULL, `Author` VARCHAR(50) NOT NULL, `Creatures` VARCHAR(5000) NOT NULL);";
+                    cmd.CommandText = @"CREATE TABLE IF NOT EXISTS `Twinks` (`Count` INTEGER NOT NULL, `Author` VARCHAR(50) NOT NULL, `Creatures` VARCHAR(5000) NOT NULL);";
                     await cmd.ExecuteNonQueryAsync();
                 }
                 catch (DbException ex)
