@@ -13,11 +13,187 @@ namespace DBChanger
     {
         static SqliteConnection tShockDb;
         static SqliteConnection minigamesDb;
+        static DateTime LastTitleUpdate = DateTime.Now;
 
         static void Main(string[] args)
         {
             //MainAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-            ParkourClearAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            TwinkiesSearch().ConfigureAwait(false).GetAwaiter().GetResult();
+        }
+
+        static async Task TwinkiesSearch()
+        {
+            InfoMessage("[DBChanger] Подключение к tshock.sqlite . . .");
+            tShockDb = await GetConnection(Path.Combine("tshock.sqlite"));
+            if (tShockDb == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Получение списка игроков . . .");
+            var all = await GetAll();
+            if (all == null || all.Count == 0)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            var list = new List<TwinkAccount>();
+            while (all.Count > 1)
+            {
+                if ((DateTime.Now - LastTitleUpdate).TotalMilliseconds > 100)
+                {
+                    Console.Title = $"Осталось проверить: {all.Count}";
+                    LastTitleUpdate = DateTime.Now;
+                }
+                var user = all[0];
+                var twinks = all.Skip(1).Where(x => x.uuid == user.uuid);
+                if (twinks.Count() > 0)
+                {
+                    user.twinks.AddRange(twinks);
+                    list.Add(user);
+                }
+                all.RemoveAll(x => x.uuid == user.uuid);
+            }
+            if (list.Count == 0)
+            {
+                InfoMessage("[DBChanger] Список пуст.");
+                await Task.Delay(-1);
+            }
+
+            var db = await GetTwinksDatabase();
+            if (db == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Составление базы данных о твинках . . .");
+            int success = 0;
+            int errors = 0;
+            foreach (var x in list)
+            {
+                if ((DateTime.Now - LastTitleUpdate).TotalMilliseconds > 100)
+                {
+                    Console.Title = $"Обработано результатов: {success + errors}/{list.Count}";
+                    LastTitleUpdate = DateTime.Now;
+                }
+                if (await SaveTwink(db, x))
+                    success++;
+                else
+                    errors++;
+            }
+            SuccessMessage($"[DBChanger] Успешных операций: {success}/{list.Count}.");
+            SuccessMessage("[DBChanger] Готово!");
+            await Task.Delay(-1);
+        }
+
+        static async Task<List<TwinkAccount>> GetAll()
+        {
+            var list = new List<TwinkAccount>();
+            using (var cmd = tShockDb.CreateCommand())
+            {
+                cmd.CommandText = $"SELECT * FROM `Users`;";
+                try
+                {
+                    using (var r = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await r.ReadAsync())
+                        {
+                            var lastLogin = r.IsDBNull(6) ? 
+                                new DateTime() : 
+                                DateTime.Parse(r.GetString(6)).ToLocalTime();
+                            list.Add(new TwinkAccount
+                            {
+                                name = r.GetString(1),
+                                uuid = r.GetString(3),
+                                lastLogin = lastLogin,
+                                twinks = new List<TwinkAccount>()
+                            });
+                            if ((DateTime.Now - LastTitleUpdate).TotalMilliseconds > 100)
+                            {
+                                Console.Title = $"Загружено аккаунтов: {list.Count}";
+                                LastTitleUpdate = DateTime.Now;
+                            }
+                        }
+                        return list;
+                    }
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                }
+                catch (ArgumentException ex)
+                {
+                    ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                }
+                catch (InvalidCastException ex)
+                {
+                    ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                }
+            }
+            return null;
+        }
+
+        static async Task<SqliteConnection> GetTwinksDatabase()
+        {
+            var path = Path.Combine("twinks.sqlite");
+            if (!File.Exists(path))
+            {
+                SqliteConnection.CreateFile(path);
+            }
+
+            InfoMessage("[DBChanger] Подключение к twinks.sqlite . . .");
+            var db = await GetConnection(path);
+            if (db == null)
+            {
+                return null;
+            }
+
+            InfoMessage("[DBChanger] Создание таблицы твинков . . .");
+            using (var cmd = new SqliteCommand { Connection = db })
+            {
+                try
+                {
+                    cmd.CommandText = @"CREATE TABLE IF NOT EXISTS `Twinks` (`Index` INTEGER PRIMARY KEY AUTOINCREMENT, `Count` INTEGER NOT NULL, `Author` VARCHAR(50) NOT NULL, `Creatures` VARCHAR(5000) NOT NULL);";
+                    await cmd.ExecuteNonQueryAsync();
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
+                    return null;
+                }
+            }
+            return db;
+        }
+
+        static async Task<bool> SaveTwink(SqliteConnection db, TwinkAccount twink)
+        {
+            var count = twink.twinks.Count + 1;
+            var author = twink.ToString();
+            var creatures = string.Join("\n\n", twink.twinks.Select(x => x.ToString()));
+
+            if (author.Length > 50 || creatures.Length > 5000)
+            {
+                ErrorMessage($"[Database] {twink.name}: превышение лимита на символы.");
+                return false;
+            }
+
+            using (var cmd = db.CreateCommand())
+            {
+                cmd.CommandText = $"INSERT INTO `Twinks` (`Count`, `Author`, `Creatures`) VALUES ({count}, '{author}', '{creatures}');";
+                try
+                {
+                    await cmd.ExecuteNonQueryAsync();
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
+                    return false;
+                }
+            }
+            return true;
         }
 
         static async Task ParkourClearAsync()
@@ -417,6 +593,19 @@ namespace DBChanger
                     .Substring(1, pins.Length - 2)
                     .Split(',').Select(i => int.Parse(i))
                     .ToList();
+            }
+        }
+    
+        class TwinkAccount
+        {
+            public string name;
+            public string uuid;
+            public DateTime lastLogin;
+            public List<TwinkAccount> twinks;
+
+            public override string ToString()
+            {
+                return $"{name.Replace("'", "''")}\n{lastLogin.ToString("s")}";
             }
         }
     }
