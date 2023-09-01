@@ -18,9 +18,203 @@ namespace DBChanger
         static void Main(string[] args)
         {
             //MainAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-            TwinkiesSearch().ConfigureAwait(false).GetAwaiter().GetResult();
+            RemoveTwinks().ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
+        #region Твинки на удаление
+        static async Task RemoveTwinks()
+        {
+            InfoMessage("[DBChanger] Подключение к twinks.sqlite . . .");
+            var twinksDb = await GetConnection(Path.Combine("twinks.sqlite"));
+            if (twinksDb == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Подключение к Minigames.sqlite . . .");
+            minigamesDb = await GetConnection(Path.Combine("Minigames.sqlite"));
+            if (minigamesDb == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Получение списка целей . . .");
+            var targets = await GetTargets(twinksDb);
+            if (targets == null || targets.Count == 0)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Сортировка списка целей по баллам . . .");
+            if (!await CheckList(targets))
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            string results = 
+                " --- --- --- РЕЗУЛЬТАТЫ ОТБОРА ТВИНКОВ НА УДАЛЕНИЕ --- --- ---" + '\n' +
+                '\n' +            
+                '\n' +           
+                '\n' +            
+                " --- Очки ---" + '\n' +            
+                "   +5     за особую группу" + '\n' +            
+                "+1 +2 +3  за актуальность логина" + '\n' +
+                "+1 +2 +3  за величину баланса" + '\n' +
+                "+1 +2 +3  за длину костюма" + '\n' +
+                "+1 +2 +3  за длину значков" + '\n' +
+                '\n' +           
+                '\n' +             
+                '\n' +          
+                " --- Общие сведения ---" + '\n' +            
+                $"Отобрано целей: {targets.Count}" + '\n' +         
+                $"Всего аккаунтов: {targets.Sum(x => x.twinks.Count)}" + '\n' +                   
+                '\n' +           
+                '\n' +          
+                '\n' +
+                " --- Список отобранных целей ---" + '\n' +
+                '\n' +
+                string.Join("\n\n", targets.Select(x => $"  *  {string.Join("\n     ", x.twinks.Select(y => $"{y.name}  ---  {y.points} очков"))}")) + '\n' +
+                '\n' +
+                '\n' +
+                '\n' +
+                $"Дата: {DateTime.Now}, Автор программы: Диагенов Михаил";
+
+
+            File.WriteAllText($"{Environment.CurrentDirectory}\\DBChanger results.txt", results);
+            SuccessMessage("[DBChanger] Готово!");
+            await Task.Delay(-1);
+        }
+
+        static async Task<List<TwinkAccount>> GetTargets(SqliteConnection twinksDb)
+        {
+            var list = new List<TwinkAccount>();
+            using (var cmd = twinksDb.CreateCommand())
+            {
+                cmd.CommandText = $"SELECT * FROM `Twinks` WHERE `Count`>3;";
+                try
+                {
+                    using (var r = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await r.ReadAsync())
+                        {
+                            var info = r.GetString(1)
+                                .Split('\n');
+                            var twinks = r.GetString(2)
+                                .Split(new string[] { "\n\n" }, StringSplitOptions.None)
+                                .Select(x => x.Split('\n'));
+
+                            list.Add(new TwinkAccount
+                            {
+                                twinks = twinks.Select(x => new TwinkAccount
+                                {
+                                    name = x[0],
+                                    group = x[1],
+                                    lastLogin = DateTime.Parse(x[2]).ToLocalTime(),
+                                }).ToList()
+                            });
+                            list.Last().twinks.Add(new TwinkAccount
+                            {
+                                name = info[0],
+                                group = info[1],
+                                lastLogin = DateTime.Parse(info[2]).ToLocalTime()
+                            });
+                        }
+                    }
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
+                }
+                catch (ArgumentException ex)
+                {
+                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
+                }
+                catch (InvalidCastException ex)
+                {
+                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
+                }
+            }
+            return list;
+        }
+
+        static async Task<bool> CheckList(List<TwinkAccount> list)
+        {
+            using (var cmd = minigamesDb.CreateCommand())
+            {
+                try
+                {
+                    foreach (var i in list)
+                    {
+                        var order = i.twinks.OrderBy(x => (DateTime.Now - x.lastLogin).TotalDays).ToArray();
+                        for (int x = 0; x < Math.Min(3, order.Length); x++)
+                        {
+                            order[x].points += 3 - x;
+                        }
+
+                        foreach (var x in i.twinks)
+                        {
+                            if (x.group != "default")
+                                x.points += 5;
+
+                            cmd.CommandText =
+                                $"SELECT * FROM `Players` WHERE `Username`='{x.name.Replace("'", "''")}';";
+
+                            using (var r = await cmd.ExecuteReaderAsync())
+                            {
+                                if (await r.ReadAsync())
+                                {
+                                    x.balance = r.GetInt32(1);
+                                    x.invLength = r.IsDBNull(2) ? 0 : r.GetString(2).Length;
+                                    x.pinLength = r.IsDBNull(6) ? 0 : r.GetString(6).Length;
+                                }
+                            }
+                        }
+
+                        order = i.twinks.OrderByDescending(x => x.balance).ToArray();
+                        for (int x = 0; x < Math.Min(3, order.Length); x++)
+                        {
+                            order[x].points += 3 - x;
+                        }
+
+                        order = i.twinks.OrderByDescending(x => x.invLength).ToArray();
+                        for (int x = 0; x < Math.Min(3, order.Length); x++)
+                        {
+                            order[x].points += 3 - x;
+                        }
+
+                        order = i.twinks.OrderByDescending(x => x.pinLength).ToArray();
+                        for (int x = 0; x < Math.Min(3, order.Length); x++)
+                        {
+                            order[x].points += 3 - x;
+                        }
+                        i.twinks = i.twinks.OrderByDescending(x => x.points).ToList();
+                    }
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.Message}");
+                    return false;
+                }
+                catch (ArgumentException ex)
+                {
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.Message}");
+                    return false;
+                }
+                catch (InvalidCastException ex)
+                {
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.Message}");
+                    return false;
+                }
+            }
+            return list.Count > 0;
+        }
+        #endregion
+
+        #region Получение твинков
         static async Task TwinkiesSearch()
         {
             InfoMessage("[DBChanger] Подключение к tshock.sqlite . . .");
@@ -108,6 +302,7 @@ namespace DBChanger
                             {
                                 name = r.GetString(1),
                                 uuid = r.GetString(3),
+                                group = r.GetString(4),
                                 lastLogin = lastLogin,
                                 twinks = new List<TwinkAccount>()
                             });
@@ -133,7 +328,7 @@ namespace DBChanger
                     ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
                 }
             }
-            return null;
+            return list;
         }
 
         static async Task<SqliteConnection> GetTwinksDatabase()
@@ -156,7 +351,7 @@ namespace DBChanger
             {
                 try
                 {
-                    cmd.CommandText = @"CREATE TABLE IF NOT EXISTS `Twinks` (`Count` INTEGER NOT NULL, `Author` VARCHAR(50) NOT NULL, `Creatures` VARCHAR(5000) NOT NULL);";
+                    cmd.CommandText = @"CREATE TABLE IF NOT EXISTS `Twinks` (`Count` INTEGER NOT NULL, `Author` VARCHAR(100) NOT NULL, `Creatures` VARCHAR(10000) NOT NULL);";
                     await cmd.ExecuteNonQueryAsync();
                 }
                 catch (DbException ex)
@@ -174,7 +369,7 @@ namespace DBChanger
             var author = twink.ToString();
             var creatures = string.Join("\n\n", twink.twinks.Select(x => x.ToString()));
 
-            if (author.Length > 50 || creatures.Length > 5000)
+            if (author.Length > 100 || creatures.Length > 10000)
             {
                 ErrorMessage($"[Database] {twink.name}: превышение лимита на символы.");
                 return false;
@@ -195,7 +390,9 @@ namespace DBChanger
             }
             return true;
         }
+        #endregion
 
+        #region Сброс значков за паркуры
         static async Task ParkourClearAsync()
         {
             InfoMessage("[DBChanger] Подключение к Minigames.sqlite . . .");
@@ -323,7 +520,9 @@ namespace DBChanger
                 }
             }
         }
+        #endregion
 
+        #region Удаление заброшенных аккаунтов
         static async Task MainAsync()
         {
             InfoMessage("[DBChanger] Подключение к tshock.sqlite . . .");
@@ -527,7 +726,9 @@ namespace DBChanger
                 }
             }
         }
+        #endregion
 
+        #region Console messages
         static void ErrorMessage(string message)
         {
             Console.ForegroundColor = ConsoleColor.DarkRed;
@@ -548,6 +749,7 @@ namespace DBChanger
             Console.WriteLine($"[{DateTime.Now.ToString()}] " + message);
             Console.ResetColor();
         }
+        #endregion
 
         class AccountInfo
         {
@@ -600,12 +802,18 @@ namespace DBChanger
         {
             public string name;
             public string uuid;
+            public string group;
             public DateTime lastLogin;
             public List<TwinkAccount> twinks;
+            
+            public int points;
+            public int balance;
+            public int invLength;
+            public int pinLength;
 
             public override string ToString()
             {
-                return $"{name.Replace("'", "''")}\n{lastLogin.ToString("s")}";
+                return $"{name.Replace("'", "''")}\n{group}\n{lastLogin.ToString("s")}";
             }
         }
     }
