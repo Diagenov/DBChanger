@@ -123,7 +123,8 @@ namespace DBChanger
                                 new DateTime() :
                                 DateTime.Parse(r.GetString(5)).ToLocalTime();
 
-                            if (string.IsNullOrWhiteSpace(uuid) || string.IsNullOrWhiteSpace(ips))
+                            if (string.IsNullOrWhiteSpace(uuid) || string.IsNullOrWhiteSpace(ips) 
+                             || new DateTime() == lastLogin || new DateTime() == registered)
                             {
                                 list.Add(new EmptyAccount
                                 {
@@ -173,8 +174,8 @@ namespace DBChanger
 
         static bool CheckNickname(string username, out string reason)
         {
-            var chars = username.ToList().FindAll(x => !"абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`!@#$%^&*()_+\"№;%:?-=\\/|[]{}'<>.,".Contains(x));
-            if (chars.Count != 0)
+            var access = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`!@#$%^&*()_+\"№;%:?-=\\/|[]{}'<>.,";
+            if (username.Any(x => !access.Contains(x)))
             {
                 reason = "неклавиатурные символы в нике";
                 return false;
@@ -245,10 +246,10 @@ namespace DBChanger
 
                 if (Badwords.TryGetValue(lowerInvariant[0], out List<string> list) && list.Any(x => lowerInvariant.StartsWith(x)))
                 {
-                    return false;
+                    return true;
                 }
             }
-            return true;
+            return false;
         }
         #endregion
 
