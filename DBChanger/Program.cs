@@ -282,6 +282,14 @@ namespace DBChanger
                 await Task.Delay(-1);
             }
 
+            InfoMessage("[DBChanger] Подключение к tshock.sqlite . . .");
+            tShockDb = await GetConnection(Path.Combine("tshock.sqlite"));
+            if (tShockDb == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
             InfoMessage("[DBChanger] Получение списка целей . . .");
             var targets = await GetTargets(twinksDb);
             if (targets == null || targets.Count == 0)
@@ -305,29 +313,42 @@ namespace DBChanger
                 await Task.Delay(-1);
             }
 
+            var deleted = new List<TwinkAccount>();
+            InfoMessage("[DBChanger] Удаление отобранных игроков . . .");
+            foreach (var i in targets)
+            {
+                foreach (var x in i.twinks.Skip(3))
+                {
+                    //await Delete(tShockDb, "Users", x.name);
+                    //await Delete(minigamesDb, "Players", x.name);
+                    deleted.Add(x);
+                }
+            }
+
             string results = 
-                " --- --- --- РЕЗУЛЬТАТЫ ОТБОРА ТВИНКОВ НА УДАЛЕНИЕ --- --- ---" + '\n' +
+                " --- --- --- РЕЗУЛЬТАТЫ ЧИСТКИ ТВИНКОВ --- --- ---" + '\n' +
                 '\n' +            
                 '\n' +           
                 '\n' +            
-                " --- Очки ---" + '\n' +            
-                "   +5     за особую группу" + '\n' +            
-                "+1 +2 +3  за актуальность логина" + '\n' +
-                "+1 +2 +3  за величину баланса" + '\n' +
-                "+1 +2 +3  за длину костюма" + '\n' +
-                "+1 +2 +3  за длину значков" + '\n' +
+                " --- Критерии к не удалению твинка (по очкам) ---" + '\n' +
+                "  +25     любовь создателя" + '\n' +
+                "   +5     особая группу" + '\n' +            
+                "+1 +2 +3  актуальность логина" + '\n' +
+                "+1 +2 +3  величина баланса" + '\n' +
+                "+1 +2 +3  \"длина\" костюма" + '\n' +
+                "+1 +2 +3  \"длина\" значков" + '\n' +
                 '\n' +           
                 '\n' +             
                 '\n' +          
                 " --- Общие сведения ---" + '\n' +            
-                $"Отобрано целей: {targets.Count}" + '\n' +         
-                $"Всего аккаунтов: {targets.Sum(x => x.twinks.Count)}" + '\n' +                   
+                $"Людей с 4 и более аккаунтами: {targets.Count}" + '\n' +         
+                $"Всего аккаунтов: {targets.Sum(x => x.twinks.Count)}" + '\n' +   
+                $"Удалено аккаунтов: {deleted.Count}" + '\n' +
                 '\n' +           
                 '\n' +          
                 '\n' +
-                " --- Список отобранных целей ---" + '\n' +
-                '\n' +
-                string.Join("\n\n", targets.Select(x => $"  *  {string.Join("\n     ", x.twinks.Select(y => $"{y.name}  ---  {y.points} очков"))}")) + '\n' +
+                " --- Список удалённых аккаунтов ---" + '\n' +
+                string.Join("\n", deleted.Select(x => $"{x.name}  {new string(' ', 20 - x.name.Length)}->    {x.group} --- {x.lastLogin} --- {x.balance} coins")) + '\n' +
                 '\n' +
                 '\n' +
                 '\n' +
@@ -377,15 +398,15 @@ namespace DBChanger
                 }
                 catch (DbException ex)
                 {
-                    ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
                 }
                 catch (ArgumentException ex)
                 {
-                    ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
                 }
                 catch (InvalidCastException ex)
                 {
-                    ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
                 }
             }
             return list;
@@ -408,20 +429,21 @@ namespace DBChanger
                                 r.GetString(0)
                             };
                             wish.AddRange(r.GetString(1).Split('\n'));
+                            list.Add(wish);
                         }
                     }
                 }
                 catch (DbException ex)
                 {
-                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
                 }
                 catch (ArgumentException ex)
                 {
-                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
                 }
                 catch (InvalidCastException ex)
                 {
-                    ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
                 }
             }
             return list;
