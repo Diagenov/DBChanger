@@ -21,7 +21,8 @@ namespace DBChanger
         {
             //MainAsync().ConfigureAwait(false).GetAwaiter().GetResult();
             //ClearEmptyAccounts().ConfigureAwait(false).GetAwaiter().GetResult();
-            TwinkiesSearch().ConfigureAwait(false).GetAwaiter().GetResult();
+            //TwinkiesSearch().ConfigureAwait(false).GetAwaiter().GetResult();
+            RemoveTwinks().ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
         #region Чистка дефектных аккаунтов
@@ -265,6 +266,14 @@ namespace DBChanger
                 await Task.Delay(-1);
             }
 
+            InfoMessage("[DBChanger] Подключение к BanSystem.sqlite . . .");
+            var banSystem = await GetConnection(Path.Combine("BanSystem.sqlite"));
+            if (banSystem == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
             InfoMessage("[DBChanger] Подключение к Minigames.sqlite . . .");
             minigamesDb = await GetConnection(Path.Combine("Minigames.sqlite"));
             if (minigamesDb == null)
@@ -281,8 +290,16 @@ namespace DBChanger
                 await Task.Delay(-1);
             }
 
+            InfoMessage("[DBChanger] Получение списка пожеланий . . .");
+            var wishes = await GetWishes(banSystem);
+            if (wishes == null || wishes.Count == 0)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
             InfoMessage("[DBChanger] Сортировка списка целей по баллам . . .");
-            if (!await CheckList(targets))
+            if (!await CheckList(targets, wishes))
             {
                 InfoMessage("[DBChanger] Полезный процесс завершен.");
                 await Task.Delay(-1);
@@ -360,6 +377,42 @@ namespace DBChanger
                 }
                 catch (DbException ex)
                 {
+                    ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
+                }
+                catch (ArgumentException ex)
+                {
+                    ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
+                }
+                catch (InvalidCastException ex)
+                {
+                    ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
+                }
+            }
+            return list;
+        }
+
+        static async Task<List<List<string>>> GetWishes(SqliteConnection database)
+        {
+            var list = new List<List<string>>();
+            using (var cmd = database.CreateCommand())
+            {
+                cmd.CommandText = $"SELECT * FROM `Some`";
+                try
+                {
+                    using (var r = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await r.ReadAsync())
+                        {
+                            var wish = new List<string>
+                            {
+                                r.GetString(0)
+                            };
+                            wish.AddRange(r.GetString(1).Split('\n'));
+                        }
+                    }
+                }
+                catch (DbException ex)
+                {
                     ErrorMessage($"[Database] [twinks] Error: {ex.Message}");
                 }
                 catch (ArgumentException ex)
@@ -374,7 +427,7 @@ namespace DBChanger
             return list;
         }
 
-        static async Task<bool> CheckList(List<TwinkAccount> list)
+        static async Task<bool> CheckList(List<TwinkAccount> list, List<List<string>> wishes)
         {
             using (var cmd = minigamesDb.CreateCommand())
             {
@@ -382,6 +435,16 @@ namespace DBChanger
                 {
                     foreach (var i in list)
                     {
+                        var wish = wishes.FindAll(x => i.twinks.Any(y => x.First() == y.name));
+                        if (wish.Count > 0)
+                        {
+                            foreach (var x in i.twinks)
+                            {
+                                if (wish.Any(y => y.Contains(x.name)))
+                                    x.points += 25;
+                            }
+                        }
+
                         var order = i.twinks.OrderBy(x => (DateTime.Now - x.lastLogin).TotalDays).ToArray();
                         for (int x = 0; x < Math.Min(3, order.Length); x++)
                         {
@@ -486,11 +549,10 @@ namespace DBChanger
 
                 var user = all[0];
                 var names = await GetUsernamesByUUID(banSystem, user.uuid);
-                var twinks = all.Skip(1).Where(x => names.Contains(x.name));
 
-                if (twinks.Count() > 0)
+                if (names.Count > 1)
                 {
-                    user.twinks.AddRange(twinks);
+                    user.twinks.AddRange(all.Skip(1).Where(x => names.Contains(x.name)));
                     list.Add(user);
                 }
                 all.RemoveAll(x => names.Contains(x.name));
@@ -584,6 +646,9 @@ namespace DBChanger
             {
                 foreach (var uuid in UUIDs)
                 {
+                    if (string.IsNullOrWhiteSpace(uuid) || uuid.Length < 128)
+                        continue;
+
                     cmd.CommandText = $"SELECT * FROM `Accounts` WHERE INSTR(`UUIDs`, '{uuid}') > 0;";
                     try
                     {
