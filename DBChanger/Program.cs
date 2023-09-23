@@ -319,8 +319,8 @@ namespace DBChanger
             {
                 foreach (var x in i.twinks.Skip(3))
                 {
-                    //await Delete(tShockDb, "Users", x.name);
-                    //await Delete(minigamesDb, "Players", x.name);
+                    await Delete(tShockDb, "Users", x.name);
+                    await Delete(minigamesDb, "Players", x.name);
                     deleted.Add(x);
                 }
             }
