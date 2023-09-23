@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
-using Mono.Data.Sqlite;
 using System.Data;
 using System.IO;
 using System.Data.Common;
-using System.ComponentModel.Design.Serialization;
+using Mono.Data.Sqlite;
+using Newtonsoft.Json;
 
 namespace DBChanger
 {
@@ -20,14 +20,15 @@ namespace DBChanger
         static void Main(string[] args)
         {
             //MainAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-            ClearEmptyAccounts().ConfigureAwait(false).GetAwaiter().GetResult();
+            //ClearEmptyAccounts().ConfigureAwait(false).GetAwaiter().GetResult();
+            TwinkiesSearch().ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
         #region Чистка дефектных аккаунтов
         static async Task ClearEmptyAccounts()
         {
             InfoMessage("[DBChanger] Подключение к tshock.sqlite . . .");
-            tShockDb = await GetConnection(Path.Combine("tshock", "tshock.sqlite"));
+            tShockDb = await GetConnection(Path.Combine("tshock.sqlite"));
             if (tShockDb == null)
             {
                 InfoMessage("[DBChanger] Полезный процесс завершен.");
@@ -35,7 +36,7 @@ namespace DBChanger
             }
 
             InfoMessage("[DBChanger] Подключение к Minigames.sqlite . . .");
-            minigamesDb = await GetConnection(Path.Combine("tshock", "Minigames", "Minigames.sqlite"));
+            minigamesDb = await GetConnection(Path.Combine("Minigames.sqlite"));
             if (minigamesDb == null)
             {
                 InfoMessage("[DBChanger] Полезный процесс завершен.");
@@ -465,6 +466,15 @@ namespace DBChanger
                 await Task.Delay(-1);
             }
 
+            InfoMessage("[DBChanger] Подключение к BanSystem.sqlite . . .");
+            var banSystem = await GetConnection(Path.Combine("BanSystem.sqlite"));
+            if (banSystem == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Составление списка твинков . . .");
             var list = new List<TwinkAccount>();
             while (all.Count > 1)
             {
@@ -473,14 +483,17 @@ namespace DBChanger
                     Console.Title = $"Осталось проверить: {all.Count}";
                     LastTitleUpdate = DateTime.Now;
                 }
+
                 var user = all[0];
-                var twinks = all.Skip(1).Where(x => x.uuid == user.uuid);
+                var names = await GetUsernamesByUUID(banSystem, user.uuid);
+                var twinks = all.Skip(1).Where(x => names.Contains(x.name));
+
                 if (twinks.Count() > 0)
                 {
                     user.twinks.AddRange(twinks);
                     list.Add(user);
                 }
-                all.RemoveAll(x => x.uuid == user.uuid);
+                all.RemoveAll(x => names.Contains(x.name));
             }
             if (list.Count == 0)
             {
@@ -488,6 +501,7 @@ namespace DBChanger
                 await Task.Delay(-1);
             }
 
+            InfoMessage("[DBChanger] Подключение к twinks.sqlite . . .");
             var db = await GetTwinksDatabase();
             if (db == null)
             {
@@ -561,6 +575,116 @@ namespace DBChanger
                 }
             }
             return list;
+        }
+
+        static async Task<List<Tuple<string, List<string>>>> GetByUUID(SqliteConnection database, params string[] UUIDs)
+        {
+            var list = new List<Tuple<string, List<string>>>();
+            using (var cmd = database.CreateCommand())
+            {
+                foreach (var uuid in UUIDs)
+                {
+                    cmd.CommandText = $"SELECT * FROM `Accounts` WHERE INSTR(`UUIDs`, '{uuid}') > 0;";
+                    try
+                    {
+                        using (var r = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await r.ReadAsync())
+                            {
+                                var username = r.GetString(0);
+                                if (list.Any(i => i.Item1 == username))
+                                {
+                                    continue;
+                                }
+                                list.Add(Tuple.Create(username,
+                                    JsonConvert.DeserializeObject<string[]>(r.GetString(2)).ToList()));
+                            }
+                            return list;
+                        }
+                    }
+                    catch (DbException ex)
+                    {
+                        ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
+                    }
+                    catch (ArgumentException ex)
+                    {
+                        ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
+                    }
+                    catch (InvalidCastException ex)
+                    {
+                        ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
+                    }
+                }
+            }
+            return list;
+        }
+
+        static async Task<List<string>> GetUsernamesByUUID(SqliteConnection database, string UUID)
+        {
+            var list = await GetByUUID(database, UUID);
+            var uuids = new List<string>();
+            var usernames = new List<string>();
+
+            foreach (var i in list)
+            {
+                if (i.Item2.Count < 2)
+                {
+                    continue;
+                }
+                i.Item2.Remove(UUID);
+                foreach (var uuid in i.Item2)
+                {
+                    if (!uuids.Contains(uuid))
+                        uuids.Add(uuid);
+                }
+            }
+
+            if (uuids.Count > 0)
+            {
+                foreach (var i in await GetByUUID(database, uuids.ToArray()))
+                    foreach (var uuid in i.Item2)
+                    {
+                        if (!uuids.Contains(uuid))
+                            uuids.Add(uuid);
+                    }
+            }
+            if (!uuids.Contains(UUID))
+            {
+                uuids.Add(UUID);
+            }
+
+            using (var cmd = tShockDb.CreateCommand())
+            {
+                foreach (var uuid in uuids)
+                {
+                    cmd.CommandText = $"SELECT * FROM `Users` WHERE `UUID`='{uuid}';";
+                    try
+                    {
+                        using (var r = await cmd.ExecuteReaderAsync())
+                        {
+                            while (await r.ReadAsync())
+                            {
+                                var username = r.GetString(1);
+                                if (!usernames.Contains(username))
+                                    usernames.Add(username);
+                            }
+                        }
+                    }
+                    catch (DbException ex)
+                    {
+                        ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                    }
+                    catch (ArgumentException ex)
+                    {
+                        ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                    }
+                    catch (InvalidCastException ex)
+                    {
+                        ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                    }
+                }
+            }
+            return usernames;
         }
 
         static async Task<SqliteConnection> GetTwinksDatabase()
@@ -983,6 +1107,7 @@ namespace DBChanger
         }
         #endregion
 
+        #region Классы с полями
         class AccountInfo
         {
             // Группа - default
@@ -1069,5 +1194,6 @@ namespace DBChanger
                 }
             }
         }
+        #endregion
     }
 }

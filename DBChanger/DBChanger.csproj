@@ -36,6 +36,9 @@
     <Reference Include="mono.data.sqlite">
       <HintPath>..\References\mono.data.sqlite.dll</HintPath>
     </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>..\References\Newtonsoft.Json.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Xml.Linq" />
