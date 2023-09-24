@@ -22,8 +22,101 @@ namespace DBChanger
             //MainAsync().ConfigureAwait(false).GetAwaiter().GetResult();
             //ClearEmptyAccounts().ConfigureAwait(false).GetAwaiter().GetResult();
             //TwinkiesSearch().ConfigureAwait(false).GetAwaiter().GetResult();
-            RemoveTwinks().ConfigureAwait(false).GetAwaiter().GetResult();
+            //RemoveTwinks().ConfigureAwait(false).GetAwaiter().GetResult();
+            CheckExists().ConfigureAwait(false).GetAwaiter().GetResult();
         }
+
+        #region Проверка на существование 
+        static async Task CheckExists()
+        {
+            InfoMessage("[DBChanger] Подключение к tshock.sqlite . . .");
+            tShockDb = await GetConnection(Path.Combine("tshock.sqlite"));
+            if (tShockDb == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Подключение к BanSystem.sqlite . . .");
+            var banSystem = await GetConnection(Path.Combine("BanSystem.sqlite"));
+            if (banSystem == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Получение списка остатков от аккаунтов . . .");
+            var list = await GetList(banSystem);
+            if (list == null || list.Count == 0)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Удаление найденных остатков . . .");
+            list.ForEach(async x => await Delete(banSystem, x));
+
+            File.WriteAllText(Path.Combine("DBChanger results.txt"), string.Join("\n", list));
+            SuccessMessage("[DBChanger] Готово!");
+            await Task.Delay(-1);
+        }
+
+        static async Task<List<string>> GetList(SqliteConnection database)
+        {
+            var list = new List<string>();
+            try
+            {
+                using (var cmd = database.CreateCommand())
+                {
+                    cmd.CommandText = $"SELECT * FROM `Accounts`;";
+                    using (var r = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await r.ReadAsync())
+                            list.Add(r.GetString(0));
+                    }
+                }
+                using (var cmd = tShockDb.CreateCommand())
+                {
+                    cmd.CommandText = $"SELECT * FROM `Users`;";
+                    using (var r = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await r.ReadAsync())
+                            list.Remove(r.GetString(1));
+                        return list;
+                    }
+                }
+            }
+            catch (DbException ex)
+            {
+                ErrorMessage($"[Database] [BanSystem & tshock] Error: {ex.Message}");
+            }
+            catch (ArgumentException ex)
+            {
+                ErrorMessage($"[Database] [BanSystem & tshock] Error: {ex.Message}");
+            }
+            catch (InvalidCastException ex)
+            {
+                ErrorMessage($"[Database] [BanSystem & tshock] Error: {ex.Message}");
+            }
+            return null;
+        }
+
+        static async Task Delete(SqliteConnection database, string username)
+        {
+            using (var cmd = database.CreateCommand())
+            {
+                cmd.CommandText = $"DELETE FROM `Accounts` WHERE `Username`='{username.Replace("'", "''")}';";
+                try
+                {
+                    await cmd.ExecuteNonQueryAsync();
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [BanSystem] Error: {ex.Message}");
+                }
+            }
+        }
+        #endregion
 
         #region Чистка дефектных аккаунтов
         static async Task ClearEmptyAccounts()
