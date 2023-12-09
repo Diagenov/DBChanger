@@ -23,8 +23,121 @@ namespace DBChanger
             //ClearEmptyAccounts().ConfigureAwait(false).GetAwaiter().GetResult();
             //TwinkiesSearch().ConfigureAwait(false).GetAwaiter().GetResult();
             //RemoveTwinks().ConfigureAwait(false).GetAwaiter().GetResult();
-            CheckExists().ConfigureAwait(false).GetAwaiter().GetResult();
+            //CheckExists().ConfigureAwait(false).GetAwaiter().GetResult();
+            MoneysAsync().ConfigureAwait(false).GetAwaiter().GetResult();
         }
+
+        #region Получение монет
+        static async Task MoneysAsync()
+        {
+            InfoMessage("[DBChanger] Подключение к Minigames.sqlite . . .");
+            minigamesDb = await GetConnection(Path.Combine("Minigames.sqlite"));
+            if (minigamesDb == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Получение списка игроков . . .");
+            var list = await GetAllPlayers();
+            if (list == null || list.Count == 0)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+            list = list.OrderBy(x => x.Item2).ToList();
+
+            var distribution = new List<int>();
+            var all = 0L;
+
+            foreach (var x in list.ToArray())
+            {
+                if (x.Item2 < -5000 || x.Item2 > 240000)
+                {
+                    list.Remove(x);
+                    continue;
+                }
+
+                all += x.Item2;
+                if (x.Item2 < 0)
+                    continue;
+                
+                int index = (int)Math.Floor(x.Item2 / 5000d);
+                for (; distribution.Count < index + 1;)
+                {
+                    distribution.Add(0);
+                }
+                distribution[index]++;
+            }
+
+            var text = new List<string>();
+            var sum = distribution.Sum() * 1d;
+
+            int i = 0;
+            foreach (var x in distribution)
+            {
+                var t = $"{i * 5000} to {++i * 5000}";
+                text.Add($"{t}{new string(' ', 18 - t.Length)}*  {string.Format("{0:f4}", 100d * (x / sum))}%");
+            }
+            i = 1;
+            list.Reverse();
+
+            string results = 
+                " --- --- --- ТОП ПО КОЛИЧЕСТВУ МОНЕТ НА РУКАХ --- --- ---" + '\n' +
+                '\n' +
+                '\n' +
+                '\n' +
+                " --- Процент игроков с разным кол-вом монет ---" + '\n' +
+                string.Join("\n", text) + '\n' +
+                '\n' +
+                '\n' +
+                '\n' +
+                " --- Список ---" + '\n' +
+                string.Join("\n", list.Select(x => $" {i}) {x.Item1}{new string(' ', 27 - x.Item1.Length - $"{i++}".Length)}*  {x.Item2}")) + '\n' +
+                '\n' +
+                '\n' +
+                '\n' +
+                $"Дата: {DateTime.Now}, Автор программы: Диагенов Михаил";
+
+
+            File.WriteAllText($"{Environment.CurrentDirectory}\\DBChanger results.txt", results);
+            SuccessMessage("[DBChanger] Готово!");
+            await Task.Delay(-1);
+        }
+
+        static async Task<List<Tuple<string, int>>> GetAllPlayers()
+        {
+            var list = new List<Tuple<string, int>>();
+            using (var cmd = minigamesDb.CreateCommand())
+            {
+                cmd.CommandText = $"SELECT * FROM `Players`;";
+                try
+                {
+                    using (var r = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await r.ReadAsync())
+                        {
+                            list.Add(Tuple.Create(r.GetString(0), r.GetInt32(1)));
+                        }
+                        return list;
+                    }
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.Message}");
+                }
+                catch (ArgumentException ex)
+                {
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.Message}");
+                }
+                catch (InvalidCastException ex)
+                {
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.Message}");
+                }
+            }
+            return null;
+        }
+        #endregion
 
         #region Проверка на существование 
         static async Task CheckExists()
