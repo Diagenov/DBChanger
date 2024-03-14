@@ -24,8 +24,137 @@ namespace DBChanger
             //TwinkiesSearch().ConfigureAwait(false).GetAwaiter().GetResult();
             //RemoveTwinks().ConfigureAwait(false).GetAwaiter().GetResult();
             //CheckExists().ConfigureAwait(false).GetAwaiter().GetResult();
-            MoneysAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            //MoneysAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            Aboba().ConfigureAwait(false).GetAwaiter().GetResult();
         }
+
+        #region Анализ пакетов
+        static async Task Aboba()
+        {
+            InfoMessage("[DBChanger] Подключение к SDAnalyzer.sqlite . . .");
+            var database = await GetConnection(Path.Combine("SDAnalyzer.sqlite"));
+            if (database == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Получение списка пакетов . . .");
+            var list = await GetPacketsInfo(database);
+            if (list == null || list.Count == 0)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            var last = list.First().Start.ToShortDateString();
+            var dict = new Dictionary<string, Dictionary<int, double>>()
+            {
+                { last, new Dictionary<int, double>() }
+            };
+            var index = 0;
+            var count = list.Count;
+
+            foreach (var i in list)
+            {
+                var start = i.Start.ToShortDateString();
+                if (!dict.ContainsKey(start))
+                {
+                    dict[last] = dict[last]
+                        .OrderByDescending(j => j.Value)
+                        .Take(Math.Min(10, dict[last].Count))
+                        .ToDictionary(j => j.Key, j => j.Value);
+                    dict.Add(last = start, new Dictionary<int, double>());
+                }
+                if (!dict[start].ContainsKey(i.Type))
+                {
+                    dict[start].Add(i.Type, 0);
+                }
+                dict[start][i.Type] += i.Size.MBytes;
+                Console.Title = $"Обработано {++index}/{count}";
+            }
+
+            dict[last] = dict[last]
+                .OrderByDescending(j => j.Value)
+                .Take(Math.Min(10, dict[last].Count))
+                .ToDictionary(j => j.Key, j => j.Value);
+
+            string results = 
+                " --- --- --- ДОЛЯ ПАКЕТОВ В ОБЩЕМ ОБЪЕМЕ ИСХОДЯЩЕГО ТРАФИКА --- --- ---" + '\n' +
+                '\n' +
+                '\n' +
+                '\n' +
+                " --- Временной период ---" + '\n' +
+                $"От: {list.Min(i => i.Start)}" + '\n' +
+                $"До {list.Max(i => i.End)}" + '\n' +
+                '\n' +
+                '\n' +
+                '\n' +
+                " --- Топ нагрузки пакетов по дням за период ---" + '\n' +
+                string.Join("\n", dict.Select(i => $"  * {i.Key}:\t{string.Join(", ", i.Value.Keys)}")) + '\n' +
+                '\n' +   
+                '\n' +
+                '\n' +
+                $"Дата: {DateTime.Now}, Автор программы: Диагенов Михаил";
+
+            File.WriteAllText($"{Environment.CurrentDirectory}\\DBChanger results.txt", results);
+            SuccessMessage("[DBChanger] Готово!");
+            await Task.Delay(-1);
+        }
+
+        static async Task<List<PacketInfo>> GetPacketsInfo(SqliteConnection db)
+        {
+            var list = new List<PacketInfo>();
+            using (var cmd = db.CreateCommand())
+            {
+                cmd.CommandText = $"SELECT * FROM `Packets`;";
+                try
+                {
+                    using (var r = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await r.ReadAsync())
+                        {
+                            list.Add(new PacketInfo
+                            {
+                                Start = DateTime.Parse(r.GetString(0)).ToLocalTime(),
+                                End = DateTime.Parse(r.GetString(1)).ToLocalTime(),
+                                Type = r.GetInt32(2),
+                                Size = JsonConvert.DeserializeObject<PacketSize>(r.GetString(3))
+                            });
+                        }
+                        return list;
+                    }
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                }
+                catch (ArgumentException ex)
+                {
+                    ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                }
+                catch (InvalidCastException ex)
+                {
+                    ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                }
+            }
+            return list;
+        }
+
+        struct PacketInfo
+        {
+            public DateTime Start;
+            public DateTime End;
+            public int Type;
+            public PacketSize Size;
+        }
+
+        struct PacketSize
+        {
+            public long Count;
+            public double MBytes;
+        }
+        #endregion
 
         #region Получение монет
         static async Task MoneysAsync()
