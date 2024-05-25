@@ -25,73 +25,66 @@ namespace DBChanger
             //RemoveTwinks().ConfigureAwait(false).GetAwaiter().GetResult();
             //CheckExists().ConfigureAwait(false).GetAwaiter().GetResult();
             //MoneysAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-            Aboba2().ConfigureAwait(false).GetAwaiter().GetResult();
+            Aboba().ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
         #region Анализ пакетов
         static async Task Aboba()
         {
-            InfoMessage("[DBChanger] Подключение к SDAnalyzer.sqlite . . .");
-            var database = await GetConnection(Path.Combine("SDAnalyzer.sqlite"));
+            InfoMessage("[DBChanger] Подключение к PacketsAnalyzer.sqlite . . .");
+            var database = await GetConnection(Path.Combine("PacketsAnalyzer.sqlite"));
             if (database == null)
             {
                 InfoMessage("[DBChanger] Полезный процесс завершен.");
                 await Task.Delay(-1);
             }
 
-            InfoMessage("[DBChanger] Получение списка пакетов . . .");
-            var list = await GetPacketsInfo(database);
-            if (list == null || list.Count == 0)
+            InfoMessage("[DBChanger] Получение лимитеров . . .");
+            var getLimiter = await GetPacketsLimiter(PacketTypes.Get, database);
+            var sendLimiter = await GetPacketsLimiter(PacketTypes.Send, database);
+            if (getLimiter == null || getLimiter.Count == 0 || sendLimiter == null || sendLimiter.Count == 0)
             {
                 InfoMessage("[DBChanger] Полезный процесс завершен.");
                 await Task.Delay(-1);
             }
 
-            var last = list.First().Start.ToShortDateString();
-            var dict = new Dictionary<string, Dictionary<int, double>>()
+            InfoMessage("[DBChanger] Получение пакетов сверх лимита . . .");
+            var get = await GetPackets(PacketTypes.Get, getLimiter, database);
+            var send = await GetPackets(PacketTypes.Send, sendLimiter, database);
+            if (get == null || get.Count == 0 || send == null || send.Count == 0)
             {
-                { last, new Dictionary<int, double>() }
-            };
-            var index = 0;
-            var count = list.Count;
-
-            foreach (var i in list)
-            {
-                var start = i.Start.ToShortDateString();
-                if (!dict.ContainsKey(start))
-                {
-                    dict[last] = dict[last]
-                        .OrderByDescending(j => j.Value)
-                        .Take(Math.Min(10, dict[last].Count))
-                        .ToDictionary(j => j.Key, j => j.Value);
-                    dict.Add(last = start, new Dictionary<int, double>());
-                }
-                if (!dict[start].ContainsKey(i.Type))
-                {
-                    dict[start].Add(i.Type, 0);
-                }
-                dict[start][i.Type] += i.Size.MBytes;
-                Console.Title = $"Обработано {++index}/{count}";
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
             }
-
-            dict[last] = dict[last]
-                .OrderByDescending(j => j.Value)
-                .Take(Math.Min(10, dict[last].Count))
-                .ToDictionary(j => j.Key, j => j.Value);
+            foreach (var key in get.Keys.ToArray())
+            {
+                get[key] = get[key].OrderByDescending(i => i.MBytesCoeff).ToList();
+            }
+            foreach (var key in send.Keys.ToArray())
+            {
+                send[key] = send[key].OrderByDescending(i => i.MBytesCoeff).ToList();
+            }
+            
+            var getText = get
+                .OrderByDescending(i => i.Value.Count)
+                .ToDictionary(i => i.Key, i => string.Join("\n", i.Value.Select(x => $"      * {x.Start} --- {x.MBytesCoeff} ({x.CountCoeff})")));
+            
+            var sendText = send
+                .OrderByDescending(i => i.Value.Count)
+                .ToDictionary(i => i.Key, i => string.Join("\n", i.Value.Select(x => $"      * {x.Start} --- {x.MBytesCoeff} ({x.CountCoeff})")));
 
             string results = 
-                " --- --- --- ДОЛЯ ПАКЕТОВ В ОБЩЕМ ОБЪЕМЕ ИСХОДЯЩЕГО ТРАФИКА --- --- ---" + '\n' +
+                " --- --- --- СТАТИСТИКА ПАКЕТОВ В СРАВНЕНИИ СО СТАНДАРТНЫМ ЛИМИТЕРОМ --- --- ---" + '\n' +
                 '\n' +
                 '\n' +
                 '\n' +
-                " --- Временной период ---" + '\n' +
-                $"От: {list.Min(i => i.Start)}" + '\n' +
-                $"До {list.Max(i => i.End)}" + '\n' +
+                " --- Лимитеры по отправке (send) пакетов ---" + '\n' +
+                string.Join("\n", sendText.Select(i => $" * packet {i.Key}:\n{i.Value}")) + '\n' +
                 '\n' +
                 '\n' +
                 '\n' +
-                " --- Топ нагрузки пакетов по дням за период ---" + '\n' +
-                string.Join("\n", dict.Select(i => $"  * {i.Key}:\t{string.Join(", ", i.Value.Keys)}")) + '\n' +
+                " --- Лимитеры по получении (get) пакетов ---" + '\n' +
+                string.Join("\n", getText.Select(i => $" * packet {i.Key}:\n{i.Value}")) + '\n' +
                 '\n' +   
                 '\n' +
                 '\n' +
@@ -102,112 +95,101 @@ namespace DBChanger
             await Task.Delay(-1);
         }
 
-        static async Task Aboba2()
+        static async Task<Dictionary<int, PacketSize>> GetPacketsLimiter(PacketTypes table, SqliteConnection db)
         {
-            InfoMessage("[DBChanger] Подключение к SDAnalyzer.sqlite . . .");
-            var database = await GetConnection(Path.Combine("SDAnalyzer.sqlite"));
-            if (database == null)
-            {
-                InfoMessage("[DBChanger] Полезный процесс завершен.");
-                await Task.Delay(-1);
-            }
-
-            InfoMessage("[DBChanger] Получение списка пакетов . . .");
-            var list = await GetPacketsInfo(database);
-            if (list == null || list.Count == 0)
-            {
-                InfoMessage("[DBChanger] Полезный процесс завершен.");
-                await Task.Delay(-1);
-            }
-
-            var dict = new Dictionary<int, double>();
-            var total = list.Sum(i => i.Size.MBytes);
-
-            for (int type = 1; type < 140; type++)
-            {
-                var value = list.Sum(i => i.Type == type ? i.Size.MBytes : 0);
-                var percent = Math.Round(value / total, 5) * 100;
-                if (percent > 0.2)
-                {
-                    dict.Add(type, percent);
-                }
-            }
-            dict = dict.OrderByDescending(i => i.Value).ToDictionary(i => i.Key, i => i.Value);
-
-            string results =
-                " --- --- --- ДОЛЯ ПАКЕТОВ В ОБЩЕМ ОБЪЕМЕ ИСХОДЯЩЕГО ТРАФИКА --- --- ---" + '\n' +
-                '\n' +
-                '\n' +
-                '\n' +
-                " --- Временной период ---" + '\n' +
-                $"От: {list.Min(i => i.Start)}" + '\n' +
-                $"До {list.Max(i => i.End)}" + '\n' +
-                '\n' +
-                '\n' +
-                '\n' +
-                " --- Доля нагрузки пакетов за период ---" + '\n' +
-                string.Join("\n", dict.Select(i => $" * packet {i.Key}\t=\t{i.Value}%")) + '\n' +
-                '\n' +
-                '\n' +
-                '\n' +
-                $"Дата: {DateTime.Now}, Автор программы: Диагенов Михаил";
-
-            File.WriteAllText($"{Environment.CurrentDirectory}\\DBChanger results.txt", results);
-            SuccessMessage("[DBChanger] Готово!");
-            await Task.Delay(-1);
-        }
-
-        static async Task<List<PacketInfo>> GetPacketsInfo(SqliteConnection db)
-        {
-            var list = new List<PacketInfo>();
+            var list = new Dictionary<int, PacketSize>();
             using (var cmd = db.CreateCommand())
             {
-                cmd.CommandText = $"SELECT * FROM `Packets`;";
+                cmd.CommandText = $"SELECT * FROM `{table}Limiter`;";
                 try
                 {
                     using (var r = await cmd.ExecuteReaderAsync())
-                    {
                         while (await r.ReadAsync())
                         {
-                            list.Add(new PacketInfo
-                            {
-                                Start = DateTime.Parse(r.GetString(0)).ToLocalTime(),
-                                End = DateTime.Parse(r.GetString(1)).ToLocalTime(),
-                                Type = r.GetInt32(2),
-                                Size = JsonConvert.DeserializeObject<PacketSize>(r.GetString(3))
-                            });
+                            list.Add(r.GetInt32(1), JsonConvert.DeserializeObject<PacketSize>(r.GetString(2)));
                         }
-                        return list;
-                    }
                 }
                 catch (DbException ex)
                 {
-                    ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [{table}Limiter] Error: {ex.Message}");
                 }
                 catch (ArgumentException ex)
                 {
-                    ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [{table}Limiter] Error: {ex.Message}");
                 }
                 catch (InvalidCastException ex)
                 {
-                    ErrorMessage($"[Database] [tshock] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [{table}Limiter] Error: {ex.Message}");
                 }
             }
             return list;
         }
 
-        struct PacketInfo
+        static async Task<Dictionary<int, List<OverLimitPacket>>> GetPackets(PacketTypes table, Dictionary<int, PacketSize> limiter, SqliteConnection db)
         {
-            public DateTime Start;
-            public DateTime End;
-            public int Type;
-            public PacketSize Size;
+            var list = new Dictionary<int, List<OverLimitPacket>>();
+            using (var cmd = db.CreateCommand())
+            {
+                cmd.CommandText = $"SELECT * FROM `{table}Packets`;";
+                try
+                {
+                    using (var r = await cmd.ExecuteReaderAsync())
+                        while (await r.ReadAsync())
+                        {
+                            var type = r.GetInt32(2);
+                            if (!limiter.ContainsKey(type))
+                            {
+                                continue;
+                            }
+                            var limit = limiter[type];
+                            var size = JsonConvert.DeserializeObject<PacketSize>(r.GetString(3));
+
+                            if (size.MBytes < limit.MBytes * 2 && size.Count < limit.Count * 2)
+                            {
+                                continue;
+                            }
+                            if (!list.ContainsKey(type))
+                            {
+                                list.Add(type, new List<OverLimitPacket>());
+                            }
+                            list[type].Add(new OverLimitPacket
+                            {
+                                Start = r.GetString(0),
+                                CountCoeff = (int)Math.Ceiling(1d * size.Count / limit.Count),
+                                MBytesCoeff = (int)Math.Ceiling(1d * size.MBytes / limit.MBytes),
+                            });
+                        }
+                }
+                catch (DbException ex)
+                {
+                    ErrorMessage($"[Database] [{table}Packets] Error: {ex.Message}");
+                }
+                catch (ArgumentException ex)
+                {
+                    ErrorMessage($"[Database] [{table}Packets] Error: {ex.Message}");
+                }
+                catch (InvalidCastException ex)
+                {
+                    ErrorMessage($"[Database] [{table}Packets] Error: {ex.Message}");
+                }
+            }
+            return list;
         }
 
+        struct OverLimitPacket
+        {
+            public string Start;
+            public int CountCoeff;
+            public int MBytesCoeff;
+        }
         struct PacketSize
         {
             public long Count;
             public double MBytes;
+        }
+        enum PacketTypes : byte
+        {
+            Get, Send
         }
         #endregion
 
