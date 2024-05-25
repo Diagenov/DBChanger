@@ -25,7 +25,7 @@ namespace DBChanger
             //RemoveTwinks().ConfigureAwait(false).GetAwaiter().GetResult();
             //CheckExists().ConfigureAwait(false).GetAwaiter().GetResult();
             //MoneysAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-            Aboba().ConfigureAwait(false).GetAwaiter().GetResult();
+            Aboba2().ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
         #region Анализ пакетов
@@ -93,6 +93,61 @@ namespace DBChanger
                 " --- Топ нагрузки пакетов по дням за период ---" + '\n' +
                 string.Join("\n", dict.Select(i => $"  * {i.Key}:\t{string.Join(", ", i.Value.Keys)}")) + '\n' +
                 '\n' +   
+                '\n' +
+                '\n' +
+                $"Дата: {DateTime.Now}, Автор программы: Диагенов Михаил";
+
+            File.WriteAllText($"{Environment.CurrentDirectory}\\DBChanger results.txt", results);
+            SuccessMessage("[DBChanger] Готово!");
+            await Task.Delay(-1);
+        }
+
+        static async Task Aboba2()
+        {
+            InfoMessage("[DBChanger] Подключение к SDAnalyzer.sqlite . . .");
+            var database = await GetConnection(Path.Combine("SDAnalyzer.sqlite"));
+            if (database == null)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            InfoMessage("[DBChanger] Получение списка пакетов . . .");
+            var list = await GetPacketsInfo(database);
+            if (list == null || list.Count == 0)
+            {
+                InfoMessage("[DBChanger] Полезный процесс завершен.");
+                await Task.Delay(-1);
+            }
+
+            var dict = new Dictionary<int, double>();
+            var total = list.Sum(i => i.Size.MBytes);
+
+            for (int type = 1; type < 140; type++)
+            {
+                var value = list.Sum(i => i.Type == type ? i.Size.MBytes : 0);
+                var percent = Math.Round(value / total, 5) * 100;
+                if (percent > 0.2)
+                {
+                    dict.Add(type, percent);
+                }
+            }
+            dict = dict.OrderByDescending(i => i.Value).ToDictionary(i => i.Key, i => i.Value);
+
+            string results =
+                " --- --- --- ДОЛЯ ПАКЕТОВ В ОБЩЕМ ОБЪЕМЕ ИСХОДЯЩЕГО ТРАФИКА --- --- ---" + '\n' +
+                '\n' +
+                '\n' +
+                '\n' +
+                " --- Временной период ---" + '\n' +
+                $"От: {list.Min(i => i.Start)}" + '\n' +
+                $"До {list.Max(i => i.End)}" + '\n' +
+                '\n' +
+                '\n' +
+                '\n' +
+                " --- Доля нагрузки пакетов за период ---" + '\n' +
+                string.Join("\n", dict.Select(i => $" * packet {i.Key}\t=\t{i.Value}%")) + '\n' +
+                '\n' +
                 '\n' +
                 '\n' +
                 $"Дата: {DateTime.Now}, Автор программы: Диагенов Михаил";
