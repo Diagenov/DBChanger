@@ -25,171 +25,113 @@ namespace DBChanger
             //RemoveTwinks().ConfigureAwait(false).GetAwaiter().GetResult();
             //CheckExists().ConfigureAwait(false).GetAwaiter().GetResult();
             //MoneysAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-            Aboba().ConfigureAwait(false).GetAwaiter().GetResult();
+            Community().ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
-        #region Анализ пакетов
-        static async Task Aboba()
+        #region Удаление заброшенных аккаунтов
+        static async Task Community()
         {
-            InfoMessage("[DBChanger] Подключение к PacketsAnalyzer.sqlite . . .");
-            var database = await GetConnection(Path.Combine("PacketsAnalyzer.sqlite"));
-            if (database == null)
+            InfoMessage("[DBChanger] Подключение к tshock.sqlite . . .");
+            tShockDb = await GetConnection(Path.Combine("tshock.sqlite"));
+            if (tShockDb == null)
             {
                 InfoMessage("[DBChanger] Полезный процесс завершен.");
                 await Task.Delay(-1);
             }
 
-            InfoMessage("[DBChanger] Получение лимитеров . . .");
-            var getLimiter = await GetPacketsLimiter(PacketTypes.Get, database);
-            var sendLimiter = await GetPacketsLimiter(PacketTypes.Send, database);
-            if (getLimiter == null || getLimiter.Count == 0 || sendLimiter == null || sendLimiter.Count == 0)
+            InfoMessage("[DBChanger] Получение списка игроков . . .");
+            var list = await GetCommunity();
+            if (list == null || list.Count == 0)
             {
                 InfoMessage("[DBChanger] Полезный процесс завершен.");
                 await Task.Delay(-1);
             }
-
-            InfoMessage("[DBChanger] Получение пакетов сверх лимита . . .");
-            var get = await GetPackets(PacketTypes.Get, getLimiter, database);
-            var send = await GetPackets(PacketTypes.Send, sendLimiter, database);
-            if (get == null || get.Count == 0 || send == null || send.Count == 0)
-            {
-                InfoMessage("[DBChanger] Полезный процесс завершен.");
-                await Task.Delay(-1);
-            }
-            foreach (var key in get.Keys.ToArray())
-            {
-                get[key] = get[key].OrderByDescending(i => i.MBytesCoeff).ToList();
-            }
-            foreach (var key in send.Keys.ToArray())
-            {
-                send[key] = send[key].OrderByDescending(i => i.MBytesCoeff).ToList();
-            }
-            
-            var getText = get
-                .OrderByDescending(i => i.Value.Count)
-                .ToDictionary(i => i.Key, i => string.Join("\n", i.Value.Select(x => $"      * {x.Start} --- {x.MBytesCoeff} ({x.CountCoeff})")));
-            
-            var sendText = send
-                .OrderByDescending(i => i.Value.Count)
-                .ToDictionary(i => i.Key, i => string.Join("\n", i.Value.Select(x => $"      * {x.Start} --- {x.MBytesCoeff} ({x.CountCoeff})")));
-
-            string results = 
-                " --- --- --- СТАТИСТИКА ПАКЕТОВ В СРАВНЕНИИ СО СТАНДАРТНЫМ ЛИМИТЕРОМ --- --- ---" + '\n' +
-                '\n' +
-                '\n' +
-                '\n' +
-                " --- Лимитеры по отправке (send) пакетов ---" + '\n' +
-                string.Join("\n", sendText.Select(i => $" * packet {i.Key}:\n{i.Value}")) + '\n' +
-                '\n' +
-                '\n' +
-                '\n' +
-                " --- Лимитеры по получении (get) пакетов ---" + '\n' +
-                string.Join("\n", getText.Select(i => $" * packet {i.Key}:\n{i.Value}")) + '\n' +
-                '\n' +   
-                '\n' +
-                '\n' +
-                $"Дата: {DateTime.Now}, Автор программы: Диагенов Михаил";
-
-            File.WriteAllText($"{Environment.CurrentDirectory}\\DBChanger results.txt", results);
+            File.WriteAllText(Path.Combine("community.txt"), string.Join("\n\n\n", list.OrderByDescending(x => x.Twinks.Count > 0 ? Math.Max(x.Count, x.Twinks.Max(y => y.Count)) : x.Count).Select(x => x.Text)));
             SuccessMessage("[DBChanger] Готово!");
             await Task.Delay(-1);
         }
 
-        static async Task<Dictionary<int, PacketSize>> GetPacketsLimiter(PacketTypes table, SqliteConnection db)
+        static async Task<List<CommunityInfo>> GetCommunity()
         {
-            var list = new Dictionary<int, PacketSize>();
-            using (var cmd = db.CreateCommand())
+            var list = new List<CommunityInfo>();
+            using (var cmd = tShockDb.CreateCommand())
             {
-                cmd.CommandText = $"SELECT * FROM `{table}Limiter`;";
+                cmd.CommandText = $"SELECT * FROM `Users`;";
                 try
                 {
                     using (var r = await cmd.ExecuteReaderAsync())
+                    {
                         while (await r.ReadAsync())
                         {
-                            list.Add(r.GetInt32(1), JsonConvert.DeserializeObject<PacketSize>(r.GetString(2)));
-                        }
-                }
-                catch (DbException ex)
-                {
-                    ErrorMessage($"[Database] [{table}Limiter] Error: {ex.Message}");
-                }
-                catch (ArgumentException ex)
-                {
-                    ErrorMessage($"[Database] [{table}Limiter] Error: {ex.Message}");
-                }
-                catch (InvalidCastException ex)
-                {
-                    ErrorMessage($"[Database] [{table}Limiter] Error: {ex.Message}");
-                }
-            }
-            return list;
-        }
+                            var name = r.IsDBNull(1) ? "" : r.GetString(1);
+                            var uuid = r.IsDBNull(3) ? "" : r.GetString(3);
+                            var group = r.IsDBNull(4) ? "" : r.GetString(4);
 
-        static async Task<Dictionary<int, List<OverLimitPacket>>> GetPackets(PacketTypes table, Dictionary<int, PacketSize> limiter, SqliteConnection db)
-        {
-            var list = new Dictionary<int, List<OverLimitPacket>>();
-            using (var cmd = db.CreateCommand())
-            {
-                cmd.CommandText = $"SELECT * FROM `{table}Packets`;";
-                try
-                {
-                    using (var r = await cmd.ExecuteReaderAsync())
-                        while (await r.ReadAsync())
-                        {
-                            var type = r.GetInt32(2);
-                            if (!limiter.ContainsKey(type))
+                            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(uuid) || string.IsNullOrWhiteSpace(group))
                             {
                                 continue;
                             }
-                            var limit = limiter[type];
-                            var size = JsonConvert.DeserializeObject<PacketSize>(r.GetString(3));
+                            var registered = r.IsDBNull(5) ? default : DateTime.Parse(r.GetString(5)).ToLocalTime();
+                            var lastLogin = r.IsDBNull(6) ? default : DateTime.Parse(r.GetString(6)).ToLocalTime();
 
-                            if (size.MBytes < limit.MBytes * 2 && size.Count < limit.Count * 2)
+                            if (registered == default || lastLogin == default)
                             {
                                 continue;
                             }
-                            if (!list.ContainsKey(type))
+                            var count = (lastLogin - registered).Ticks;
+                            var lifetime = new DateTime(count);
+                            var text = "";
+
+                            if (lifetime.Year - 1 > 0)
                             {
-                                list.Add(type, new List<OverLimitPacket>());
+                                text += $"{lifetime.Year - 1} years";
                             }
-                            list[type].Add(new OverLimitPacket
+                            if (lifetime.Month - 1 > 0)
                             {
-                                Start = r.GetString(0),
-                                CountCoeff = (int)Math.Ceiling(1d * size.Count / limit.Count),
-                                MBytesCoeff = (int)Math.Ceiling(1d * size.MBytes / limit.MBytes),
-                            });
+                                text += $" {lifetime.Month - 1} months";
+                            }
+                            if (lifetime.Day - 1 > 0)
+                            {
+                                text += $" {lifetime.Day - 1} days";
+                            }
+                            if (text == "")
+                            {
+                                continue;
+                            }
+                            var commi = new CommunityInfo
+                            {
+                                Name = name,
+                                UUID = uuid,
+                                Group = group,
+                                Registered = registered.ToString("dd.MM.yyyy"),
+                                Count = count,
+                                LifeTime = text,
+                            };
+                            var twink = list.Find(x => x.UUID == uuid);
+                            if (twink != default)
+                            {
+                                twink.Twinks.Add(commi);
+                                continue;
+                            }
+                            list.Add(commi);
                         }
+                        return list;
+                    }
                 }
                 catch (DbException ex)
                 {
-                    ErrorMessage($"[Database] [{table}Packets] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.Message}");
                 }
                 catch (ArgumentException ex)
                 {
-                    ErrorMessage($"[Database] [{table}Packets] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.Message}");
                 }
                 catch (InvalidCastException ex)
                 {
-                    ErrorMessage($"[Database] [{table}Packets] Error: {ex.Message}");
+                    ErrorMessage($"[Database] [Minigames] Error: {ex.Message}");
                 }
             }
-            return list;
-        }
-
-        struct OverLimitPacket
-        {
-            public string Start;
-            public int CountCoeff;
-            public int MBytesCoeff;
-        }
-        struct PacketSize
-        {
-            public long Count;
-            public double MBytes;
-        }
-        enum PacketTypes : byte
-        {
-            Get, Send
+            return null;
         }
         #endregion
 
@@ -1567,8 +1509,32 @@ namespace DBChanger
         #endregion
 
         #region Классы с полями
-        class AccountInfo
+        class CommunityInfo
         {
+            public string Name;
+            public long Count;
+            public string LifeTime;
+            public string Registered;
+            public string Group;
+            public string UUID;
+            public List<CommunityInfo> Twinks = new List<CommunityInfo>();
+
+            public string Text
+            {
+                get
+                {
+                    var text = $"{Name}\n   {Group}\n   {Registered}\n   {LifeTime}";
+                    if (Twinks.Count > 0)
+                    {
+                        return text + $"\n   {string.Join("   ", Twinks.Select(x => x.Text))}";
+                    }
+                    return $"{text}\n";
+                }
+            }
+        }
+
+        class AccountInfo
+            {
             // Группа - default
             // Инвентарь - {}
             public string name;
@@ -1651,6 +1617,35 @@ namespace DBChanger
                         return "Не полностью удален";
                     return "Не удален";
                 }
+            }
+        }
+        
+        class AccountSkin
+        {
+            public string Username;
+            public int AccountID;
+            public int Skin;
+            //public int Hair; = 55
+            public int HairColor;
+            public int PantsColor;
+            public int ShirtColor;
+            public int UnderShirtColor;
+            public int ShoeColor;
+            public int SkinColor;
+            public int EyeColor;
+
+            public AccountSkin(DbDataReader r)
+            {
+                AccountID = r.GetInt32(0);
+                Skin = r.GetInt32(9);
+                //Hair = r.GetInt32(10);
+                HairColor = r.GetInt32(12);
+                PantsColor = r.GetInt32(13);
+                ShirtColor = r.GetInt32(14);
+                UnderShirtColor = r.GetInt32(15);
+                ShoeColor = r.GetInt32(16);
+                SkinColor = r.GetInt32(18);
+                EyeColor = r.GetInt32(19);
             }
         }
         #endregion
